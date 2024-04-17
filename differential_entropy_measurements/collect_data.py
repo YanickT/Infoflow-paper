@@ -8,7 +8,7 @@ from util.dataloader import get_train_data
 VARS = np.arange(0.1, 4.0, 0.5)
 VARS = [round(var, 2) for var in VARS]
 print(VARS)
-DEPTH = 100
+DEPTH = 10
 EPOCHS = 10
 CUTOFFS = np.linspace(-1.0, -3.5, 6)
 print(CUTOFFS)
