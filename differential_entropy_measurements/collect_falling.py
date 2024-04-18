@@ -6,14 +6,14 @@ import torch
 
 # parameter for data collection
 STARTVAR = 1.6
-VARRANGE = [0.1, 3.1]
-DIRECTION = 1  # -1
+VARRANGE = [0.1, 5.1]
+DIRECTION = -1  # -1
 
 ACCTHRESHOLD = 0.8
-VARSTEP = 0.5
-STARTDEPTH = 60
+VARSTEP = 0.25
+STARTDEPTH = 50
 DEPTHSTEP = 10
-EPOCHS = 10
+EPOCHS = 1
 PATH = f"data/{STARTDEPTH}_{EPOCHS}_falling_MNIST"
 
 
@@ -42,7 +42,8 @@ def evaluate(depth: int, var: float, device: Union[torch.device, str] = "cpu") -
 
 # create path to store information in
 if os.path.exists(PATH):
-    raise AttributeError("Path exists!")
+    pass
+    # raise AttributeError("Path exists!")
 else:
     os.mkdir(PATH)
 
@@ -55,7 +56,7 @@ train_data, test_data = get_train_data()
 
 # configuration parameter
 depth = STARTDEPTH
-var_ = STARTVAR
+var_ = STARTVAR + DIRECTION * VARSTEP
 
 evaluate(STARTDEPTH, STARTVAR)
 while True:
@@ -66,7 +67,7 @@ while True:
         if acc > ACCTHRESHOLD:
             break
         depth -= DEPTHSTEP
-        print(f"Update left depth to: {acc}")
+        print(f"Update left depth to: {depth}")
     var_ -= VARSTEP
 
     if not (VARRANGE[0] <= var_ <= VARRANGE[1]):

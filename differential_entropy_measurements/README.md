@@ -18,3 +18,5 @@ in the paper. In case you want to recreate these plots please control that the s
 
 - collect_falling.py: File used to collect trainability data with a minimal accuracy. If the accuracy is not
 archived, a more shallow network is considered and trained.
+
+- plot_falling.py: Used to plot the data collected by collect_falling.py
