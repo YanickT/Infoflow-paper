@@ -97,7 +97,7 @@ class Network:
             losses.append(stats[0])
             accs.append(stats[1])
 
-            print(f"\rTraining {(i + 1)} / {its}: {time.time() - t1}", end="")
+            print(f"\rTraining {(i + 1)} / {its}: {time.time() - t1} with acc: {stats[1]: .3f}", end="")
 
         print(f"\rTraining done in {time.time() - t1}s")
         return losses, accs

@@ -5,9 +5,9 @@ from util.dataloader import get_train_data
 import matplotlib.pyplot as plt
 
 # parameters for the network
-DEPTH = 9
-VARS = (1.65, 0.05)
-EPOCHS = 100
+DEPTH = 10
+VARS = (1.65, 0.05)  # .9316000044345856
+EPOCHS = 30
 
 # load training data
 train_data, test_data = get_train_data(bs=100)
@@ -17,7 +17,7 @@ device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 print(f"Device: {device} with {torch.cuda.device_count()} gpus")
 
 # initialize neural network
-net = Network(28 ** 2, 10, DEPTH, VARS, device=device)  # input should be 32**2 for CIFAR10 data
+net = Network(28 ** 2, 10, DEPTH, VARS, device=device, size="shrinking")  # input should be 32**2 for CIFAR10 data
 conet = ContraNetwork(net, device=device)
 
 # train neural network

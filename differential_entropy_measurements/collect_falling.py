@@ -1,38 +1,32 @@
-import os.path
-
-import similarity_based_cutoff as sbc
-import numpy as np
-import torch
+from typing import List, Union
+from util.differntial_entropy.network import Network
 from util.dataloader import get_train_data, get_train_data_cifar
-import matplotlib.pyplot as plt
-torch.backends.cudnn.benchmark = True
+import os
+import torch
+
+# parameter for data collection
+STARTVAR = 1.6
+VARRANGE = [0.1, 3.1]
+DIRECTION = 1  # -1
+
+ACCTHRESHOLD = 0.8
+VARSTEP = 0.5
+STARTDEPTH = 60
+DEPTHSTEP = 10
+EPOCHS = 10
+PATH = f"data/{STARTDEPTH}_{EPOCHS}_falling_MNIST"
 
 
-def evaluate(depth, var):
-    # train middle one
-    net = sbc.Network(28 ** 2, 10, depth, [var, 0.05], device=device)
-    conet = sbc.ContraNetwork(net, device=device)
-
-    # evaluate trainability
-    conet.train(train_data)
-    cutoffs = []
-    for threshold in CUTOFFS:
-        temp = []
-        for c, (inp, _) in zip(range(10), test_data):
-            cutoff = conet.cutoff_cascade(inp, threshold)
-            temp.append(cutoff)
-            # cutoffs.append(cutoff)
-
-        if any([(e is None) for e in temp]):
-            cutoff = None
-        else:
-            cutoff = int(round(np.mean(temp)))
-        cutoffs.append(cutoff)
-
-    with open(f"{PATH}/conet_{var}_{depth}.txt", "w") as doc:
-        doc.writelines("\n".join([f"{t};{c}" for t, c in zip(CUTOFFS, cutoffs)]))
-
-    # train network to show trainability (in multiple steps)
+# function for evaluation of network configuration
+def evaluate(depth: int, var: float, device: Union[torch.device, str] = "cpu") -> List[float]:
+    """
+    Train a network for a given variance var for the weights
+    :param depth: int = number of layers of the network
+    :param var: float = weight-variance for initialization
+    :param device: Union[torch.device, str] = device to perform calculation on
+    :return: List[float] = accuracy(epoch)
+    """
+    net = Network(28 ** 2, 10, depth, (var, 0.05), device=device)
 
     accs = []
     for i in range(EPOCHS):
@@ -46,51 +40,34 @@ def evaluate(depth, var):
     return accs
 
 
-STARTVAR = 1.6
-VARRANGE = [0.1, 3.1]
-VARSTEP = 0.1
-
-STARTDEPTH = 40
-DEPTHSTEP = 5
-EPOCHS = 20
-CUTOFFS = np.linspace(-1.0, -5.5, 10)
-
-PATH = f"dummy/2ndMethod/{STARTDEPTH}_wide_{EPOCHS}eps_entropy_falling_measurement"
+# create path to store information in
 if os.path.exists(PATH):
     raise AttributeError("Path exists!")
 else:
     os.mkdir(PATH)
 
-
-train_data, test_data = get_train_data()
+# load device to perform calculations on
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 print(f"Device: {device} with {torch.cuda.device_count()} gpus")
 
+# get training data
+train_data, test_data = get_train_data()
 
-left = STARTDEPTH
-right = STARTDEPTH
-left_var = STARTVAR - VARSTEP
-right_var = STARTVAR + VARSTEP
+# configuration parameter
+depth = STARTDEPTH
+var_ = STARTVAR
 
 evaluate(STARTDEPTH, STARTVAR)
 while True:
-    print(f"Train: {left_var} | {right_var}")
+    print(f"Train: {var_}")
 
     while True:
-        acc_left = evaluate(left, left_var)[-1]
-        if acc_left > 0.2:
+        acc = evaluate(depth, var_, device)[-1]
+        if acc > ACCTHRESHOLD:
             break
-        left -= DEPTHSTEP
-        print(f"Update left depth to: {acc_left}")
-    left_var -= VARSTEP
+        depth -= DEPTHSTEP
+        print(f"Update left depth to: {acc}")
+    var_ -= VARSTEP
 
-    while True:
-        acc_right = evaluate(right, right_var)[-1]
-        if acc_right > 0.2:
-            break
-        right -= DEPTHSTEP
-        print(f"Update right depth to: {acc_right}")
-    right_var -= VARSTEP
-
-    if right_var > VARRANGE[1] or left_var < VARRANGE[0]:
+    if not (VARRANGE[0] <= var_ <= VARRANGE[1]):
         break
