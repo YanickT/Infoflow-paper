@@ -7,7 +7,6 @@ import numpy as np
 # from scipy.stats import entropy
 import matplotlib.pyplot as plt
 
-
 # https://math.stackexchange.com/questions/1804805/how-is-the-entropy-of-the-normal-distribution-derived
 # https://de.wikipedia.org/wiki/Differentielle_Entropie
 NORMALFACTOR = (0.5 * np.log(2 * np.pi * np.e))
@@ -249,6 +248,30 @@ class ContraNetwork:
         else:
             raise AttributeError(f"Could not detect a layer sequence to hijack")
 
+    def get_activations(self, data: Iterable) -> List[List[torch.tensor]]:
+        layers = self._hijack_network()
+        activations = []
+        with torch.no_grad():
+            for inp, _ in data:
+                temp = [inp.to(self.device)]
+                for f in layers:
+                    temp.append(f(temp[-1]))
+                activations.append(temp)
+        return activations
+
+    def train_lvl(self, lvl: int, train_data: Iterable, its: int = 1):
+        c = self.inverse_sequentials[lvl]
+        opt = self.optimiers[lvl]
+        t1 = time.time()
+        for _ in range(its):
+            for inp, out in train_data:
+                pred = c(inp)
+                loss = torch.nn.functional.mse_loss(pred, out)
+                loss.backward()
+                opt.step()
+                opt.zero_grad()
+        print(f"Training done in {time.time() - t1}s")
+
     def train(self, train_data: Iterable, its: int = 1):
         """
         Train all reconstruction networks
@@ -345,12 +368,12 @@ class ContraNetwork:
         layers = self._hijack_network()
         x_forward = inp.to(self.device)
 
-        #root = int(np.ceil(np.sqrt(self.length))) + 1
-        #fig, axs = plt.subplots(root, root)
-        #axs = axs.flatten()
-        #ax_counter = 0
-        #axs[ax_counter].imshow(inp, aspect="auto")
-        #ax_counter += 1
+        # root = int(np.ceil(np.sqrt(self.length))) + 1
+        # fig, axs = plt.subplots(root, root)
+        # axs = axs.flatten()
+        # ax_counter = 0
+        # axs[ax_counter].imshow(inp, aspect="auto")
+        # ax_counter += 1
 
         with torch.no_grad():
             for i, f in enumerate(layers):
@@ -362,13 +385,13 @@ class ContraNetwork:
                 for j in range(i, -1, -1):
                     x_back = self.inverse_sequentials[j](x_back)
 
-                #axs[ax_counter].imshow(x_back, aspect="auto")
-                #ax_counter += 1
+                # axs[ax_counter].imshow(x_back, aspect="auto")
+                # ax_counter += 1
 
                 # compare images and find difference
                 # std = torch.sum(torch.std(x_back, dim=0))
-                #entropy_ = 0
-                #for k in range(x_back.shape[1]):
+                # entropy_ = 0
+                # for k in range(x_back.shape[1]):
                 #    c, _ = np.histogram(x_back[:, k], bins=20, range=(-1, 1))
                 #    entropy_ += entropy(c)
                 std = torch.std(x_back, dim=0)
@@ -395,4 +418,3 @@ class ContraNetwork:
         for c in self.inverse_sequentials[::-1]:
             inp = c(inp)
         return inp.detach().cpu()
-
