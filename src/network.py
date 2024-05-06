@@ -4,12 +4,6 @@ import torch.nn as nn
 import inspect
 import time
 import numpy as np
-# from scipy.stats import entropy
-import matplotlib.pyplot as plt
-
-# https://math.stackexchange.com/questions/1804805/how-is-the-entropy-of-the-normal-distribution-derived
-# https://de.wikipedia.org/wiki/Differentielle_Entropie
-NORMALFACTOR = (0.5 * np.log(2 * np.pi * np.e))
 
 
 class Network:
@@ -355,55 +349,6 @@ class ContraNetwork:
 
         print(f"Cascade done in {time.time() - t1}s")
         return images
-
-    def cutoff_cascade(self, inp: torch.tensor, cutoff_threshold: float = -5.5) -> int:
-        """
-        Determine cutoff using the cascades and reconstructions
-        :param inp: torch.tensor = torch.tensor = input to propagate through net (should be batch with size > 10)
-        :param cutoff_threshold: float = threshold value for information cutoff
-        :return: int = information cutoff depth
-        """
-        self.set_eval_mode()
-
-        layers = self._hijack_network()
-        x_forward = inp.to(self.device)
-
-        # root = int(np.ceil(np.sqrt(self.length))) + 1
-        # fig, axs = plt.subplots(root, root)
-        # axs = axs.flatten()
-        # ax_counter = 0
-        # axs[ax_counter].imshow(inp, aspect="auto")
-        # ax_counter += 1
-
-        with torch.no_grad():
-            for i, f in enumerate(layers):
-                # forward pass through the network
-                x_forward = f(x_forward)
-
-                # reconstruction
-                x_back = x_forward.detach()
-                for j in range(i, -1, -1):
-                    x_back = self.inverse_sequentials[j](x_back)
-
-                # axs[ax_counter].imshow(x_back, aspect="auto")
-                # ax_counter += 1
-
-                # compare images and find difference
-                # std = torch.sum(torch.std(x_back, dim=0))
-                # entropy_ = 0
-                # for k in range(x_back.shape[1]):
-                #    c, _ = np.histogram(x_back[:, k], bins=20, range=(-1, 1))
-                #    entropy_ += entropy(c)
-                std = torch.std(x_back, dim=0)
-                # print(NORMALFACTOR + torch.log(std))
-                entropy_ = torch.mean(NORMALFACTOR + torch.log(std))
-                # print(entropy_)
-                if entropy_ <= cutoff_threshold:
-                    # plt.show()
-                    return i
-
-        # plt.show()
-        return self.length
 
     def get_perfect(self, index: int, full=0.0) -> torch.tensor:
         """
