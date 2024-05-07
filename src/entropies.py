@@ -16,6 +16,7 @@ def rel_entropy(first: torch.tensor, sec: torch.tensor, off: float = 1e-12) -> t
     :param off: float = offset to apply to prevent zeros in first and sec
     :return: torch.tensor = [batch] relative entropy for each sample in batch
     """
+
     # ensure positive definiteness of tensors
     first -= torch.min(first, dim=1).values[:, None]
     sec -= torch.min(sec, dim=1).values[:, None]
@@ -32,7 +33,7 @@ def rel_entropy(first: torch.tensor, sec: torch.tensor, off: float = 1e-12) -> t
     return torch.sum(first * torch.log(first / sec), dim=1)
 
 
-def diff_entropy(actis: torch.tensor) -> float:
+def diff_entropy(actis: torch.tensor) -> torch.tensor:
     """
     Calculate the differential entropy between a set of activations
     :param actis: torch.tensor = [batch, activations]
@@ -48,7 +49,7 @@ def diff_entropy(actis: torch.tensor) -> float:
     return torch.mean(NORMALFACTOR + torch.log(std))
 
 
-def cutoff(seq: torch.tensor, atol: float = 1e-8, rtol: float=1e-5) -> torch.tensor:
+def cutoff_det(seq: torch.tensor, atol: float = 1e-8, rtol: float=1e-5) -> torch.tensor:
     """
     Search for saturation if seq with tolerance
     :param seq: torch.tensor = [batch, 1D entropy]
@@ -56,10 +57,10 @@ def cutoff(seq: torch.tensor, atol: float = 1e-8, rtol: float=1e-5) -> torch.ten
     :param rtol: float = relative tolerance when comparing floats
     :return: torch.tensor = [batch] cutoffs for each run in batch
     """
-    cutoffs = torch.full((seq.shape[0],), seq.shape[1], dtype=torch.int32, requires_grad=False)
-    for i, entropies in enumerate(seq.shape[0]):
-        for j, entropy in enumerate(entropies):
+    cutoffs = torch.full((len(seq),), len(seq[0]), dtype=torch.int32, requires_grad=False)
+    for i, entropies in enumerate(seq):
+        for j, entropy in enumerate(entropies[::-1]):
             if not (np.isclose(entropy, entropies[-1], atol=atol, rtol=rtol)):
-                cutoffs[i] = seq.shape[1] - j
+                cutoffs[i] = len(entropies) - j - 1
                 break
     return cutoffs

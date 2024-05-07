@@ -158,3 +158,4 @@ CIFAR10
 test/
 titanic/
 differential_entropy_measurements_out
+measurements/MNIST
