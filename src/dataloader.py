@@ -17,7 +17,7 @@ def get_train_data(bs: int = 64) -> Tuple[DataLoader, DataLoader]:
                                             torchvision.transforms.Lambda(lambda x: torch.flatten(x))])
     train_data = torchvision.datasets.MNIST(DATAPATH, train=True, download=True, transform=trans)
     test_data = torchvision.datasets.MNIST(DATAPATH, train=False, transform=trans, download=True)
-    return DataLoader(train_data, batch_size=bs, shuffle=True), DataLoader(test_data, batch_size=bs)
+    return DataLoader(train_data, batch_size=bs, shuffle=True), DataLoader(test_data, batch_size=bs, shuffle=True)
 
 
 def get_train_data_cifar(bs: int = 64) -> Tuple[DataLoader, DataLoader]:
@@ -32,7 +32,7 @@ def get_train_data_cifar(bs: int = 64) -> Tuple[DataLoader, DataLoader]:
                                             torchvision.transforms.Lambda(lambda x: torch.flatten(x))])
     train_data = torchvision.datasets.CIFAR10(DATAPATH, train=True, download=True, transform=trans)
     test_data = torchvision.datasets.CIFAR10(DATAPATH, train=False, transform=trans, download=True)
-    return DataLoader(train_data, batch_size=bs, shuffle=True), DataLoader(test_data, batch_size=bs)
+    return DataLoader(train_data, batch_size=bs, shuffle=True), DataLoader(test_data, batch_size=bs, shuffle=True)
 
 
 if __name__ == "__main__":

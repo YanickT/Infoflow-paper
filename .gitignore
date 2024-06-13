@@ -159,3 +159,6 @@ test/
 titanic/
 differential_entropy_measurements_out
 measurements/MNIST
+measurements/data
+src/data/
+src/data.zip

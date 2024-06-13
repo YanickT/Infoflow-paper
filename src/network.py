@@ -1,9 +1,38 @@
+import copy
 from typing import Tuple, Union, Sequence, Iterable, List
+import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import inspect
-import time
+from itertools import repeat
+import torch.multiprocessing as mpl
 import numpy as np
+import time
+
+
+def worker(c: torch.nn.Sequential, opt: torch.optim.Optimizer, train_data: Tuple[Tuple[torch.tensor, torch.tensor]],
+           its: int):
+    for _ in range(its):
+        for inp, out in train_data:
+            loss = torch.nn.functional.mse_loss(c(inp), out)
+            loss.backward()
+            opt.step()
+            opt.zero_grad()
+
+
+def queue_worker(q):
+    while True:
+        args = q.get()
+        if args == "DONE":
+            break
+
+        c, opt, train_data, its = args
+        for _ in range(its):
+            for inp, out in train_data:
+                loss = torch.nn.functional.mse_loss(c(inp), out)
+                loss.backward()
+                opt.step()
+                opt.zero_grad()
 
 
 class Network:
@@ -25,7 +54,6 @@ class Network:
         :param size: Union[Sequence, str] = either "wide", "shrinking" or a sequence of layer sizes
         If sequence is provided, depth will be ignored
         """
-        super().__init__()
         self.lr = lr
         self.device = device
         self.input_dim = input_dim
@@ -45,7 +73,7 @@ class Network:
 
         for i in range(len(self.sizes) - 1):
             lin_layer = torch.nn.Linear(self.sizes[i], self.sizes[i + 1])
-            torch.nn.init.normal_(lin_layer.weight, mean=0.0, std=(np.sqrt(variances[0] / lin_layer.out_features)))
+            torch.nn.init.normal_(lin_layer.weight, mean=0.0, std=(np.sqrt(variances[0] / lin_layer.in_features)))
             torch.nn.init.normal_(lin_layer.bias, mean=0.0, std=(np.sqrt(variances[1])))
 
             layers.append(lin_layer)
@@ -59,25 +87,27 @@ class Network:
         self.model.to(self.device)
         self.optimizer = torch.optim.SGD(self.model.parameters(), lr)
 
-    def training(self, train_data: Iterable, test_data: Iterable, its: int) -> Tuple[List[float], List[float]]:
+    def training(self, train_data: Iterable, test_data: Iterable, its: int, verbose: bool = False) -> Tuple[
+        List[float], List[float]]:
         """
         Train network on provided training data. Subsequent testing on test data for each epoch
         :param train_data: Iterable = data to train on
         :param test_data: Iterable = data to test with
         :param its: int = number of epochs to train
+        :param verbose: bool = print information
         :return: Tuple[List[float], List[float]] = loss(epoch), accuracy(epoch)
         """
         losses = []
         accs = []
         t1 = time.time()
         for i in range(its):
+            self.model.train()
             for inp, out in train_data:
                 # x = self.forward_sequential(inp.double().to(self.device))
                 x = self.model(inp.to(self.device))
 
                 if self.sizes[-1] == 1:
                     loss = nn.functional.binary_cross_entropy(x, out.to(self.device))
-                    # print(x, out, loss)
                 else:
                     loss = nn.functional.cross_entropy(x, out.to(self.device))
 
@@ -90,9 +120,11 @@ class Network:
             losses.append(stats[0])
             accs.append(stats[1])
 
-            print(f"\rTraining {(i + 1)} / {its}: {time.time() - t1} with acc: {stats[1]: .3f}", end="")
+            if verbose:
+                print(f"\rTraining {(i + 1)} / {its}: {time.time() - t1} with acc: {stats[1]: .3f}", end="")
 
-        print(f"\rTraining done in {time.time() - t1}s")
+        if verbose:
+            print(f"\rTraining done in {time.time() - t1}s")
         return losses, accs
 
     def eval(self, test_data: Iterable) -> Tuple[float, float]:
@@ -253,6 +285,68 @@ class ContraNetwork:
                 activations.append(temp)
         return activations
 
+    def get_activations_sorted(self, data: Iterable) -> List[List[torch.tensor]]:
+        layers = self._hijack_network()
+        activations = [[] for i in range(len(conet) + 1)]
+        with torch.no_grad():
+            for inp, _ in data:
+                activations[0].append(inp.to(self.device))
+                for j, f in enumerate(layers, start=1):
+                    activations[j].append(f(activations[j - 1][-1]))
+        return activations
+
+    def train_parallel_sequential(self, data: Iterable, its=1, stop=5):
+        layers = self._hijack_network()
+        first = [inp.to(self.device) for inp, _ in data]
+        stop = len(self) - stop
+        with mpl.Pool() as pool:
+            for i, f in enumerate(layers):
+                # get all new activations
+                with torch.no_grad():
+                    sec = [f(e) for e in first]
+
+                # start process of training corresponding reconstruction
+                if i < stop:
+                    p = pool.apply_async(worker,
+                                         (self.inverse_sequentials[i], self.optimiers[i], tuple(zip(sec, first)), its))
+                else:
+                    worker(self.inverse_sequentials[i], self.optimiers[i], tuple(zip(sec, first)), its)
+                first = sec
+                del sec
+
+            del first
+            p.wait(timeout=10)
+
+    def train_queue(self, data, its=1, cores=mpl.cpu_count()):
+        layers = self._hijack_network()
+        first = [inp.to(self.device) for inp, _ in data]
+
+        # creat queue
+        q = mpl.Queue()
+
+        # start workers
+        workers = []
+        for i in range(cores):
+            p = mpl.Process(target=queue_worker, args=(q,))
+            p.daemon = True
+            p.start()
+            workers.append(p)
+
+        for i, f in enumerate(layers):
+            # get all new activations
+            with torch.no_grad():
+                sec = [f(e) for e in first]
+
+            # add to queue for workers
+            q.put((self.inverse_sequentials[i], self.optimiers[i], tuple(zip(sec, first)), its))
+
+            first = sec
+
+        for i in range(cores):
+            q.put("DONE")
+        [w.join() for w in workers]
+        # print(q.get())
+
     def train_lvl(self, lvl: int, train_data: Iterable, its: int = 1):
         c = self.inverse_sequentials[lvl]
         opt = self.optimiers[lvl]
@@ -295,6 +389,11 @@ class ContraNetwork:
                     # override old x
                     x = x_
         print(f"Training done in {time.time() - t1}s")
+
+    def train_parallel(self, train_data: List, its: int = 1, cores: int = mpl.cpu_count()):
+        td = (zip(train_data[lvl + 1], train_data[lvl]) for lvl in range(len(conet)))
+        with mpl.Pool(cores) as p:
+            p.starmap(worker, zip(self.inverse_sequentials, self.optimiers, td, repeat(its)))
 
     def eval(self, test_data: Iterable) -> List[float]:
         """
@@ -363,3 +462,72 @@ class ContraNetwork:
         for c in self.inverse_sequentials[::-1]:
             inp = c(inp)
         return inp.detach().cpu()
+
+
+if __name__ == "__main__":
+    import dataloader
+    import time
+
+    # necessary for cuda multiprocessing
+    mpl.set_start_method("spawn", force=True)
+
+    dataloader.DATAPATH = "../"
+
+    train_data, test_data = dataloader.get_train_data(100)
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+
+    depth = 100
+    epochs = [0, 1, 10, 30, 50, 100, 200]
+    vars = [0.1, 1.6, 3.2]
+
+    for var_ in vars:
+        print(f"START VAR = {var_} =======================================================================")
+        # train network
+        print("Start training forward net ----------------------------------------------------------")
+        torch.cuda.empty_cache()
+        print(torch.cuda.mem_get_info(0))
+        net = Network(28 ** 2, 10, depth, (var_, 0.05), device=device, size="shrinking")
+        net.training(train_data, test_data, its=1)
+        # for epoch in epochs:
+        #    net = Network(28 ** 2, 10, depth, (var_, 0.05), device=device)
+        #    loss, accs = net.training(train_data, test_data, epoch)
+        #    _, acc = net.eval(test_data)
+        #    print(f"Accuracy of {acc} reached for EPOCH = {epoch}")
+
+        # handle conet
+        # print("Start training co net ----------------------------------------------------------------")
+        conet = ContraNetwork(net, device=device)
+
+        td = conet.get_activations_sorted(train_data)
+        ts = []
+        for i in range(len(conet)):
+            td_ = zip(td[i + 1], td[i])
+            t1 = time.time()
+            conet.train_lvl(i, td_)
+            ts.append(time.time() - t1)
+            print(f"{ts[-1]}")
+        print(np.mean(ts), np.std(ts))
+
+        #print(torch.cuda.mem_get_info(0))
+        #t1 = time.time()
+        #actis = conet.train_parallel_sequential(train_data, stop=20)
+        #print(f"Time for Sequential: {time.time() - t1} s")
+
+        #t1 = time.time()
+        #actis = conet.train_queue(train_data)
+        #print(f"Time for Queue: {time.time() - t1} s")
+
+        # t1 = time.time()
+        # activations = conet.get_activations_sorted(train_data)
+        # print(f"Time for data collection: {time.time() - t1} s")
+
+        # t1 = time.time()
+        # conet.train_parallel(activations)
+        # print(f"Time for Conet-training: {time.time() - t1} s")
+
+        # plot reconstructions
+        for inp, _ in test_data:
+          cascades = conet.cascade(inp)
+          for cascade in cascades:
+              plt.imshow(cascade[0].reshape((28, 28)))
+              plt.show()
