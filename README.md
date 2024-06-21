@@ -1,6 +1,6 @@
 # Infoflow-paper
 
-Official repository to XXXXX.
+Official repository to [arXiv:2406.12916](https://arxiv.org/abs/2406.12916).
 
 ### Please check the paper for more details and better description
 
