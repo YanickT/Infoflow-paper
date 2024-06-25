@@ -1,12 +1,13 @@
-from typing import Tuple, Union, Sequence, Iterable, List, Optional
+import copy
+from typing import Tuple, Union, Sequence, Iterable, List
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import inspect
 from itertools import repeat
-from functools import reduce
 import torch.multiprocessing as mpl
 import numpy as np
+import time
 
 
 def worker(c: torch.nn.Sequential, opt: torch.optim.Optimizer, train_data: Tuple[Tuple[torch.tensor, torch.tensor]],
@@ -40,9 +41,8 @@ class Network:
     Resembles a classical discriminator network with either softmax or sigmoid output (no multi-label)
     """
 
-    def __init__(self, input_dim: Union[int, List[int]], output_dim: int, depth: int,
-                 variances: Tuple[float, float], lr: float = 1e-3,
-                 device: Union[str, torch.device] = "cpu", size: Union[Sequence, str] = "wide", convolutions: Optional[List]=None):
+    def __init__(self, input_dim: int, output_dim: int, depth: int, variances: Tuple[float, float], lr: float = 1e-3,
+                 device: Union[str, torch.device] = "cpu", size: Union[Sequence, str] = "wide"):
         """
         Initialize a new network with given parameters
         :param input_dim: int = size of the input layer
@@ -60,41 +60,6 @@ class Network:
         self.output_dim = output_dim
         self.depth = depth
         self.variances = variances
-
-        new_convs = []
-        if not (convolutions is None):
-            if isinstance(input_dim, List):
-                dim = len(input_dim)
-            else:
-                dim = 1
-                input_dim = [input_dim]
-
-            if not all([len(conv.kernel_size) == dim for conv in convolutions]):
-                raise AttributeError("At least one Convolutional layer has wrong dimensions!")
-
-            size = [convolutions[0].in_channels] + input_dim  # batch-size is excluded
-            for conv in convolutions:
-                if conv.padding == "same":
-                    continue
-
-                elif conv.padding == "valid":
-                    conv.padding = [0] * dim
-
-                new_size = [conv.out_channels]
-                for d in range(dim):
-                    width = int((size[d + 1] + 2 * conv.padding[d] - conv.dilation[d] * (conv.kernel_size[d] - 1) - 1) /
-                                conv.stride[d] + 1)  # + 1 in size[d + 1] for in_channel in size
-                    new_size.append(width)
-                size = new_size
-                new_convs.append(conv)
-                new_convs.append(nn.Tanh())
-
-            new_convs.append(nn.Flatten())
-            input_dim = reduce(lambda x, y: x * y, size)
-
-        elif isinstance(input_dim, List):
-            # if no convolution is involved, we flatten the input directly
-            input_dim = np.sum(input_dim)
 
         layers = []
         if size == "wide":
@@ -118,7 +83,7 @@ class Network:
             layers.append(torch.nn.Sigmoid())
         else:
             layers.append(torch.nn.Softmax(dim=1))
-        self.model = nn.Sequential(*(new_convs + layers))
+        self.model = nn.Sequential(*layers)
         self.model.to(self.device)
         self.optimizer = torch.optim.SGD(self.model.parameters(), lr)
 
@@ -198,14 +163,14 @@ class ContraNetwork:
     necessary
     """
 
-    def __init__(self, net: Network, device: Union[str, torch.device] = "cpu", lr=1e-3):
+    def __init__(self, net: Network, device: Union[str, torch.device] = "cpu"):
         """
         Initalize the network based on the information given at net.
         :param net: Network = network to create reconstrution networks for
         :param device: Union[str, torch.device] = device to perform calculations on
         """
         self.net = net
-        self.lr = lr
+        self.lr = net.lr
         self.device = device
         self.length = len(net.sizes) - 1
 
@@ -274,35 +239,40 @@ class ContraNetwork:
         for opt, opt_dict in zip(self.optimiers, optimizer_dicts):
             opt.load_state_dict(opt_dict)
 
-    def _group_members(self, members):
-        # split into set of sequentials
-        seq_list = []
-        temp = []
-        for layer in members:
-            if isinstance(layer, nn.Tanh):
-                temp.append(layer)
-                seq_list.append(nn.Sequential(*temp))
-                seq_list[-1].eval()
-                seq_list[-1].to(self.device)
-                temp = []
-            else:
-                temp.append(layer)
-
-        return seq_list
-
     def _hijack_network(self):
         """
         Analyse network-class, find sequence of layers and hijack them
         """
         # check if network has a sequential as attribute
-        members = [(name, value) for name, value in inspect.getmembers(self.net) if
-                   isinstance(value, nn.Sequential)]
-        if len(members) > 1:
+        sequentials = [(name, value) for name, value in inspect.getmembers(self.net) if
+                       isinstance(value, nn.Sequential)]
+        if len(sequentials) == 1:
+            # print(f"Found sequence of layers in '{sequentials[0][0]}'")
+            # split into set of sequentials
+            seq_list = []
+            temp = []
+            for layer in sequentials[0][1]:
+                if isinstance(layer, nn.Tanh):
+                    temp.append(layer)
+                    seq_list.append(nn.Sequential(*temp))
+                    seq_list[-1].eval()
+                    seq_list[-1].to(self.device)
+                    temp = []
+                else:
+                    temp.append(layer)
+
+            return seq_list
+        elif len(sequentials) > 1:
             raise AttributeError("Net has more than one sequential. Could not detect layers")
-        elif len(members) == 1:
-            return self._group_members(members[0][1])
+
+        # check if network has forward pass
+        candidates = [(name, value) for name, value in inspect.getmembers(self.net) if
+                      inspect.ismethod(value) and name == "forward"]
+        if len(candidates) == 1:
+            print(f"Found forward implementation of network")
+            raise NotImplementedError("Not yet implemented")
         else:
-            raise AttributeError("Net has no sequential... Sorry")
+            raise AttributeError(f"Could not detect a layer sequence to hijack")
 
     def get_activations(self, data: Iterable) -> List[List[torch.tensor]]:
         layers = self._hijack_network()
@@ -498,9 +468,6 @@ if __name__ == "__main__":
     import dataloader
     import time
 
-    net = Network([28, 28], 10, 10, (1.76, 0.05), convolutions=[nn.Conv2d(1, 2, (5, 5), padding="valid")])
-    exit()
-
     # necessary for cuda multiprocessing
     mpl.set_start_method("spawn", force=True)
 
@@ -541,14 +508,14 @@ if __name__ == "__main__":
             print(f"{ts[-1]}")
         print(np.mean(ts), np.std(ts))
 
-        # print(torch.cuda.mem_get_info(0))
-        # t1 = time.time()
-        # actis = conet.train_parallel_sequential(train_data, stop=20)
-        # print(f"Time for Sequential: {time.time() - t1} s")
+        #print(torch.cuda.mem_get_info(0))
+        #t1 = time.time()
+        #actis = conet.train_parallel_sequential(train_data, stop=20)
+        #print(f"Time for Sequential: {time.time() - t1} s")
 
-        # t1 = time.time()
-        # actis = conet.train_queue(train_data)
-        # print(f"Time for Queue: {time.time() - t1} s")
+        #t1 = time.time()
+        #actis = conet.train_queue(train_data)
+        #print(f"Time for Queue: {time.time() - t1} s")
 
         # t1 = time.time()
         # activations = conet.get_activations_sorted(train_data)
@@ -560,7 +527,7 @@ if __name__ == "__main__":
 
         # plot reconstructions
         for inp, _ in test_data:
-            cascades = conet.cascade(inp)
-            for cascade in cascades:
-                plt.imshow(cascade[0].reshape((28, 28)))
-                plt.show()
+          cascades = conet.cascade(inp)
+          for cascade in cascades:
+              plt.imshow(cascade[0].reshape((28, 28)))
+              plt.show()
