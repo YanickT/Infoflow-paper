@@ -3,35 +3,69 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import inspect
-from itertools import repeat
 from functools import reduce
-import torch.multiprocessing as mpl
+import warnings
 import numpy as np
+import time
 
 
-def worker(c: torch.nn.Sequential, opt: torch.optim.Optimizer, train_data: Tuple[Tuple[torch.tensor, torch.tensor]],
-           its: int):
-    for _ in range(its):
-        for inp, out in train_data:
-            loss = torch.nn.functional.mse_loss(c(inp), out)
-            loss.backward()
-            opt.step()
-            opt.zero_grad()
+class Channel(nn.Module):
+
+    def __init__(self, size):
+        super().__init__()
+        self.size = list(size)
+
+    def __repr__(self):
+        return f"Channel({self.size})"
+
+    def forward(self, x):
+        bs = x.shape[0]
+        return x.view([bs] + self.size)
 
 
-def queue_worker(q):
-    while True:
-        args = q.get()
-        if args == "DONE":
-            break
+class ResBlock(nn.Module):
 
-        c, opt, train_data, its = args
-        for _ in range(its):
-            for inp, out in train_data:
-                loss = torch.nn.functional.mse_loss(c(inp), out)
-                loss.backward()
-                opt.step()
-                opt.zero_grad()
+    def __call__(self, skip_block, projection_block):
+        self.sb = skip_block
+        self.pb = projection_block
+
+    def forward(self, x):
+        return self.sb(x) + self.pb(x)
+
+
+def conv_sizes(input_dim, conv_layers):
+    # process input dimension
+    if isinstance(input_dim, List):
+        dim = len(input_dim)
+    else:
+        dim = 1
+        input_dim = [input_dim]
+
+    # check if each layer has correct dimension
+    if not all([len(conv.kernel_size) == dim for conv in conv_layers]):
+        raise AttributeError("At least one Convolutional layer has wrong dimensions!")
+
+    # calculate sizes for each layer
+    sizes = []
+    size = [conv_layers[0].in_channels] + input_dim  # batch-size is excluded
+    sizes.append(size[:])
+
+    for conv in conv_layers:
+        if conv.padding == "same":
+            continue
+
+        elif conv.padding == "valid":
+            conv.padding = [0] * dim
+
+        new_size = [conv.out_channels]
+        for d in range(dim):
+            width = int((size[d + 1] + 2 * conv.padding[d] - conv.dilation[d] * (conv.kernel_size[d] - 1) - 1) /
+                        conv.stride[d] + 1)  # + 1 in size[d + 1] for in_channel in size
+            new_size.append(width)
+        size = new_size
+        sizes.append(size[:])
+
+    return sizes
 
 
 class Network:
@@ -42,7 +76,8 @@ class Network:
 
     def __init__(self, input_dim: Union[int, List[int]], output_dim: int, depth: int,
                  variances: Tuple[float, float], lr: float = 1e-3,
-                 device: Union[str, torch.device] = "cpu", size: Union[Sequence, str] = "wide", convolutions: Optional[List]=None):
+                 device: Union[str, torch.device] = "cpu", size: Union[Sequence, str] = "wide",
+                 convolutions: Optional[List] = None):
         """
         Initialize a new network with given parameters
         :param input_dim: int = size of the input layer
@@ -61,40 +96,21 @@ class Network:
         self.depth = depth
         self.variances = variances
 
-        new_convs = []
+        # calculate input size of linear part and prepare convs list
+        convs = []
         if not (convolutions is None):
-            if isinstance(input_dim, List):
-                dim = len(input_dim)
-            else:
-                dim = 1
-                input_dim = [input_dim]
+            input_dim = conv_sizes(input_dim, convolutions)[-1]
+            input_dim = reduce(lambda x, y: x * y, input_dim)
 
-            if not all([len(conv.kernel_size) == dim for conv in convolutions]):
-                raise AttributeError("At least one Convolutional layer has wrong dimensions!")
-
-            size = [convolutions[0].in_channels] + input_dim  # batch-size is excluded
+            # prepare convolutional layers
             for conv in convolutions:
-                if conv.padding == "same":
-                    continue
-
-                elif conv.padding == "valid":
-                    conv.padding = [0] * dim
-
-                new_size = [conv.out_channels]
-                for d in range(dim):
-                    width = int((size[d + 1] + 2 * conv.padding[d] - conv.dilation[d] * (conv.kernel_size[d] - 1) - 1) /
-                                conv.stride[d] + 1)  # + 1 in size[d + 1] for in_channel in size
-                    new_size.append(width)
-                size = new_size
-                new_convs.append(conv)
-                new_convs.append(nn.Tanh())
-
-            new_convs.append(nn.Flatten())
-            input_dim = reduce(lambda x, y: x * y, size)
+                convs.append(conv)
+                convs.append(nn.Tanh())
+            convs.append(nn.Flatten())
 
         elif isinstance(input_dim, List):
             # if no convolution is involved, we flatten the input directly
-            input_dim = np.sum(input_dim)
+            input_dim = reduce(lambda x, y: x * y, input_dim)
 
         layers = []
         if size == "wide":
@@ -118,7 +134,7 @@ class Network:
             layers.append(torch.nn.Sigmoid())
         else:
             layers.append(torch.nn.Softmax(dim=1))
-        self.model = nn.Sequential(*(new_convs + layers))
+        self.model = nn.Sequential(*(convs + layers))
         self.model.to(self.device)
         self.optimizer = torch.optim.SGD(self.model.parameters(), lr)
 
@@ -159,7 +175,7 @@ class Network:
                 print(f"\rTraining {(i + 1)} / {its}: {time.time() - t1} with acc: {stats[1]: .3f}", end="")
 
         if verbose:
-            print(f"\rTraining done in {time.time() - t1}s")
+            print(f"\n\rTraining done in {time.time() - t1}s")
         return losses, accs
 
     def eval(self, test_data: Iterable) -> Tuple[float, float]:
@@ -198,31 +214,74 @@ class ContraNetwork:
     necessary
     """
 
-    def __init__(self, net: Network, device: Union[str, torch.device] = "cpu", lr=1e-3):
+    def __init__(self, net: Network, device: Union[str, torch.device] = "cpu", convTrans=False):
         """
         Initalize the network based on the information given at net.
         :param net: Network = network to create reconstrution networks for
         :param device: Union[str, torch.device] = device to perform calculations on
         """
         self.net = net
-        self.lr = lr
         self.device = device
-        self.length = len(net.sizes) - 1
+
+        layers = self._hijack_network()
+        self.length = len(layers)
 
         # construct reconstruction sequentials
         self.inverse_sequentials = []
         self.optimiers = []
 
-        for i in range(0, self.length):
-            self.inverse_sequentials.append(
-                torch.nn.Sequential(
-                    torch.nn.Linear(net.sizes[i + 1], net.sizes[i]),
-                    nn.Tanh()
+        conv_layer = [seq[0] for seq in layers if isinstance(seq[0], (nn.Conv1d, nn.Conv2d, nn.Conv3d))]
+        if conv_layer:
+            sizes = conv_sizes(net.input_dim, conv_layer)
+        else:
+            sizes = []
+        prod = lambda x: reduce(lambda x, y: x * y, x)
+        for i, seq in enumerate(layers):
+            no_opti_flag = False
+            if isinstance(seq[0], nn.Linear):
+                self.inverse_sequentials.append(
+                    torch.nn.Sequential(
+                        nn.Linear(seq[0].out_features, seq[0].in_features),
+                        nn.Tanh()
+                    )
                 )
-            )
+            elif isinstance(seq[0], (nn.Conv1d, nn.Conv2d, nn.Conv3d)):
+                if convTrans:
+                    warnings.warn("Currently only 2d ConvTrans is supported")
+                    self.inverse_sequentials.append(
+                        nn.Sequential(
+                            nn.ConvTranspose2d(seq[0].out_channels,
+                                               seq[0].in_channels,
+                                               seq[0].kernel_size,
+                                               stride=seq[0].dilation,
+                                               dilation=seq[0].stride),
+                            nn.Tanh()
+                        )
+                    )
+                else:
+                    self.inverse_sequentials.append(
+                        nn.Sequential(
+                            nn.Flatten(),
+                            nn.Linear(prod(sizes[i + 1]), prod(sizes[i])),
+                            nn.Tanh(),
+                            Channel(sizes[i])
+                        )
+                    )
+            elif isinstance(seq[0], nn.Flatten):
+                self.inverse_sequentials.append(
+                    torch.nn.Sequential(
+                        Channel(sizes[i])
+                    )
+                )
+                no_opti_flag = True
+            else:
+                raise AttributeError(f"Could not identify layer {seq[0]} or Layer-type is not supported")
 
             self.inverse_sequentials[-1].to(self.device)
-            self.optimiers.append(torch.optim.Adam(self.inverse_sequentials[-1].parameters()))
+            if not no_opti_flag:
+                self.optimiers.append(torch.optim.Adam(self.inverse_sequentials[-1].parameters()))
+            else:
+                self.optimiers.append(None)
 
     def __len__(self) -> int:
         """
@@ -279,7 +338,7 @@ class ContraNetwork:
         seq_list = []
         temp = []
         for layer in members:
-            if isinstance(layer, nn.Tanh):
+            if isinstance(layer, (nn.Tanh, nn.Flatten, nn.ReLU)):
                 temp.append(layer)
                 seq_list.append(nn.Sequential(*temp))
                 seq_list[-1].eval()
@@ -325,58 +384,6 @@ class ContraNetwork:
                     activations[j].append(f(activations[j - 1][-1]))
         return activations
 
-    def train_parallel_sequential(self, data: Iterable, its=1, stop=5):
-        layers = self._hijack_network()
-        first = [inp.to(self.device) for inp, _ in data]
-        stop = len(self) - stop
-        with mpl.Pool() as pool:
-            for i, f in enumerate(layers):
-                # get all new activations
-                with torch.no_grad():
-                    sec = [f(e) for e in first]
-
-                # start process of training corresponding reconstruction
-                if i < stop:
-                    p = pool.apply_async(worker,
-                                         (self.inverse_sequentials[i], self.optimiers[i], tuple(zip(sec, first)), its))
-                else:
-                    worker(self.inverse_sequentials[i], self.optimiers[i], tuple(zip(sec, first)), its)
-                first = sec
-                del sec
-
-            del first
-            p.wait(timeout=10)
-
-    def train_queue(self, data, its=1, cores=mpl.cpu_count()):
-        layers = self._hijack_network()
-        first = [inp.to(self.device) for inp, _ in data]
-
-        # creat queue
-        q = mpl.Queue()
-
-        # start workers
-        workers = []
-        for i in range(cores):
-            p = mpl.Process(target=queue_worker, args=(q,))
-            p.daemon = True
-            p.start()
-            workers.append(p)
-
-        for i, f in enumerate(layers):
-            # get all new activations
-            with torch.no_grad():
-                sec = [f(e) for e in first]
-
-            # add to queue for workers
-            q.put((self.inverse_sequentials[i], self.optimiers[i], tuple(zip(sec, first)), its))
-
-            first = sec
-
-        for i in range(cores):
-            q.put("DONE")
-        [w.join() for w in workers]
-        # print(q.get())
-
     def train_lvl(self, lvl: int, train_data: Iterable, its: int = 1):
         c = self.inverse_sequentials[lvl]
         opt = self.optimiers[lvl]
@@ -401,29 +408,32 @@ class ContraNetwork:
 
         self.set_train_mode()
         layers = self._hijack_network()
+
         for i in range(its):
-            for inp, _ in train_data:
+            for counter, (inp, _) in enumerate(train_data):
+                print(f"\r{counter} / {len(train_data)}", end="")
                 x = inp.to(self.device)
                 for f, c, opt in zip(layers, self.inverse_sequentials, self.optimiers):
                     with torch.no_grad():
                         x_ = f(x)
 
                     # train reconstruction
+                    # print(f"Use {f}: {x.shape} -> {x_.shape}")
+                    # print(f"With inverse {c}:", end="")
                     x_ = x_.detach()
                     x_pred = c(x_)
-                    loss = torch.nn.functional.mse_loss(x_pred, x)
-                    loss.backward()
-                    opt.step()
-                    opt.zero_grad()
+                    # print(f"{x_.shape} -> {x_pred.shape}")
+                    # print("\n\n")
+
+                    if not (len(c) == 1 and isinstance(c[0], Channel)):
+                        loss = torch.nn.functional.mse_loss(x_pred, x)
+                        loss.backward()
+                        opt.step()
+                        opt.zero_grad()
 
                     # override old x
                     x = x_
-        print(f"Training done in {time.time() - t1}s")
-
-    def train_parallel(self, train_data: List, its: int = 1, cores: int = mpl.cpu_count()):
-        td = (zip(train_data[lvl + 1], train_data[lvl]) for lvl in range(len(conet)))
-        with mpl.Pool(cores) as p:
-            p.starmap(worker, zip(self.inverse_sequentials, self.optimiers, td, repeat(its)))
+        print(f"\nTraining done in {time.time() - t1}s")
 
     def eval(self, test_data: Iterable) -> List[float]:
         """
@@ -496,71 +506,20 @@ class ContraNetwork:
 
 if __name__ == "__main__":
     import dataloader
-    import time
 
-    net = Network([28, 28], 10, 10, (1.76, 0.05), convolutions=[nn.Conv2d(1, 2, (5, 5), padding="valid")])
-    exit()
-
-    # necessary for cuda multiprocessing
-    mpl.set_start_method("spawn", force=True)
-
-    dataloader.DATAPATH = "../"
-
-    train_data, test_data = dataloader.get_train_data(100)
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
-    depth = 100
-    epochs = [0, 1, 10, 30, 50, 100, 200]
-    vars = [0.1, 1.6, 3.2]
+    net = Network([28, 28], 10, 10, (1.76, 0.05), convolutions=[nn.Conv2d(1, 3, (5, 5), padding="valid")])
+    train_data, test_data = dataloader.get_train_data(64, flatten=False)
+    # net.training(train_data, test_data, its=1, verbose=True)
+    conet = ContraNetwork(net, convTrans=False)
+    print(conet.eval(test_data))
+    conet.train(train_data, its=1)
+    print(conet.eval(test_data))
 
-    for var_ in vars:
-        print(f"START VAR = {var_} =======================================================================")
-        # train network
-        print("Start training forward net ----------------------------------------------------------")
-        torch.cuda.empty_cache()
-        print(torch.cuda.mem_get_info(0))
-        net = Network(28 ** 2, 10, depth, (var_, 0.05), device=device, size="shrinking")
-        net.training(train_data, test_data, its=1)
-        # for epoch in epochs:
-        #    net = Network(28 ** 2, 10, depth, (var_, 0.05), device=device)
-        #    loss, accs = net.training(train_data, test_data, epoch)
-        #    _, acc = net.eval(test_data)
-        #    print(f"Accuracy of {acc} reached for EPOCH = {epoch}")
-
-        # handle conet
-        # print("Start training co net ----------------------------------------------------------------")
-        conet = ContraNetwork(net, device=device)
-
-        td = conet.get_activations_sorted(train_data)
-        ts = []
-        for i in range(len(conet)):
-            td_ = zip(td[i + 1], td[i])
-            t1 = time.time()
-            conet.train_lvl(i, td_)
-            ts.append(time.time() - t1)
-            print(f"{ts[-1]}")
-        print(np.mean(ts), np.std(ts))
-
-        # print(torch.cuda.mem_get_info(0))
-        # t1 = time.time()
-        # actis = conet.train_parallel_sequential(train_data, stop=20)
-        # print(f"Time for Sequential: {time.time() - t1} s")
-
-        # t1 = time.time()
-        # actis = conet.train_queue(train_data)
-        # print(f"Time for Queue: {time.time() - t1} s")
-
-        # t1 = time.time()
-        # activations = conet.get_activations_sorted(train_data)
-        # print(f"Time for data collection: {time.time() - t1} s")
-
-        # t1 = time.time()
-        # conet.train_parallel(activations)
-        # print(f"Time for Conet-training: {time.time() - t1} s")
-
-        # plot reconstructions
-        for inp, _ in test_data:
-            cascades = conet.cascade(inp)
-            for cascade in cascades:
-                plt.imshow(cascade[0].reshape((28, 28)))
-                plt.show()
+    # plot reconstructions
+    for inp, _ in train_data:
+        cascades = conet.cascade(inp)
+        for cascade in cascades:
+            plt.imshow(cascade[0].reshape((28, 28)))
+            plt.show()

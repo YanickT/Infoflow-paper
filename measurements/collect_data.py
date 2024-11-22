@@ -2,7 +2,6 @@ from src.network import Network, ContraNetwork
 import numpy as np
 import torch
 import os
-from scipy.stats import entropy
 from src.dataloader import get_train_data, get_train_data_cifar
 from src.entropies import rel_entropy, cutoff_det, diff_entropy
 import matplotlib.pyplot as plt
