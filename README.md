@@ -45,6 +45,8 @@ experimentally by training the networks.
 ### CNN
 
 Experimental results in [Xiao](https://arxiv.org/pdf/1806.05393) fig. 2. Entropy prediction:
+![Image of differential entropy](images/CNN_training.png)
+
 
 ### ResNet
 
@@ -55,7 +57,11 @@ allows for a small glimpse. For this test (to see if the differential entropy pr
 trainability is predicted based on an accuarcy reached after 10 epochs of training. Black means good trainability, grey
 indicates trainability, and white means an accurcy of <= 10% (guessing). As can be seen, the diff. entropy predictions
 greatly agree with the tests:
-![Image of differential entropy](images/resnet_prediction.png)
+![Image of differential entropy](images/resnet_entropie.png)
+
+Please note that the depth of the y-axis describes the number of ResNet blocks (i.e. skip connections).
+Each forward pass (ignoring the skip connection) consists of 2 conv layers. Therefore, the networks in the plot
+consist of 100 conv layers.
 
 ## Interpreting the network's decisions
 
