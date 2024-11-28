@@ -46,9 +46,6 @@ for var_w in variances_:
     conet.train(train_data, its=1)
     # print(conet.eval(test_data))
 
-    acc = fonet.training(train_data, test_data, its=10, verbose=True)[1][-1]
-    losses.append((var_w, acc))
-
     for inp, _ in test_data:
         cascades = conet.cascade(inp)
         reference = cascades[0]
@@ -96,11 +93,10 @@ for var_w in variances_:
                             f"R. A entropy; {rel_avg_cutoff}"])
         break
 
+    # train network a bit after obtaining the reconstruction entropy as a small measurement
+    # (10 eps are not sufficient in general but we get a glimpse)
+    acc = fonet.training(train_data, test_data, its=10, verbose=True)[1][-1]
+    losses.append((var_w, acc))
+
 with open(f"{PATH}/loss.csv", "w") as doc:
     doc.writelines(";".join([str(loss) for loss in losses]))
-    # plot reconstructions
-    # for inp, _ in train_data:
-    #    cascades = conet.cascade(inp)
-    #    for cascade in cascades:
-    #        plt.imshow(cascade[0].reshape((28, 28)))
-    #        plt.show()

@@ -41,7 +41,6 @@ for var_w in variances_:
 
     #print(conet.eval(test_data))
     conet.train(train_data, its=1)
-    # fonet.training(train_data, test_data, its=1, verbose=True)
     #print(conet.eval(test_data))
 
 
@@ -102,6 +101,7 @@ for var_w in variances_:
                             f"R. A entropy; {rel_avg_cutoff}"])
         break
 
+    # fonet.training(train_data, test_data, its=1, verbose=True)
     # plot reconstructions
     # for inp, _ in train_data:
     #    cascades = conet.cascade(inp)
