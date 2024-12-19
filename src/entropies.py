@@ -39,13 +39,16 @@ def diff_entropy(actis: torch.tensor) -> torch.tensor:
     :return: float = differential entropy
     """
     # normalize
+    actis = actis.double()
+    # actis += 1
     actis /= torch.sum(actis, dim=1)[:, None]
 
     # get std
-    std = torch.std(actis, dim=0)
+    logs = torch.log(torch.std(actis, dim=0))
+    # logs = logs[np.where(np.logical_not(np.isinf(logs)))]
 
     # calculate entropy
-    return torch.mean(NORMALFACTOR + torch.log(std))
+    return torch.mean(NORMALFACTOR + logs)
 
 
 def cutoff_det(seq: torch.tensor, atol: float = 1e-8, rtol: float = 1e-5, method: str = "absolut") -> torch.tensor:

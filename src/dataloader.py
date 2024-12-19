@@ -3,20 +3,42 @@ import torch
 import torchvision
 from torch.utils.data import DataLoader
 
-
 DATAPATH = ""
 
 
-def get_train_data(bs: int = 64) -> Tuple[DataLoader, DataLoader]:
+def get_train_data(bs: int = 64, flatten: bool = True) -> Tuple[DataLoader, DataLoader]:
     """
     Loads training data form default directory given by global variable PATH.
     :param bs: int = batchsize
+    :param flatten: bool = decides if MNIST will be returned as 1D or 2D image
     :return: Tuple[torch.Dataloader, torch.Dataloader] = Dataloader for training and testing
     """
-    trans = torchvision.transforms.Compose([torchvision.transforms.ToTensor(),
-                                            torchvision.transforms.Lambda(lambda x: torch.flatten(x))])
+    if flatten:
+        trans = torchvision.transforms.Compose([torchvision.transforms.ToTensor(),
+                                                torchvision.transforms.Lambda(lambda x: torch.flatten(x))])
+    else:
+        trans = torchvision.transforms.Compose([torchvision.transforms.ToTensor()])
+
     train_data = torchvision.datasets.MNIST(DATAPATH, train=True, download=True, transform=trans)
     test_data = torchvision.datasets.MNIST(DATAPATH, train=False, transform=trans, download=True)
+    return DataLoader(train_data, batch_size=bs, shuffle=True), DataLoader(test_data, batch_size=bs, shuffle=True)
+
+
+def get_train_data_FMNIST(bs: int = 64, flatten: bool = True) -> Tuple[DataLoader, DataLoader]:
+    """
+    Loads training data form default directory given by global variable PATH.
+    :param bs: int = batchsize
+    :param flatten: bool = decides if MNIST will be returned as 1D or 2D image
+    :return: Tuple[torch.Dataloader, torch.Dataloader] = Dataloader for training and testing
+    """
+    if flatten:
+        trans = torchvision.transforms.Compose([torchvision.transforms.ToTensor(),
+                                                torchvision.transforms.Lambda(lambda x: torch.flatten(x))])
+    else:
+        trans = torchvision.transforms.Compose([torchvision.transforms.ToTensor()])
+
+    train_data = torchvision.datasets.FashionMNIST(DATAPATH, train=True, download=True, transform=trans)
+    test_data = torchvision.datasets.FashionMNIST(DATAPATH, train=False, transform=trans, download=True)
     return DataLoader(train_data, batch_size=bs, shuffle=True), DataLoader(test_data, batch_size=bs, shuffle=True)
 
 

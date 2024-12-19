@@ -162,3 +162,6 @@ measurements/MNIST
 measurements/data
 src/data/
 src/data.zip
+src/MNIST
+dataset_howto.ipynb
+genko-periodic.hdf5
