@@ -51,12 +51,7 @@ Experimental results in [Xiao](https://arxiv.org/pdf/1806.05393) fig. 2. Entropy
 ### ResNet
 
 Please note that the ResNet in this experiment is constructed in analogy to [He](https://arxiv.org/abs/1512.03385)
-and thus differs from [Yang](https://arxiv.org/pdf/1712.08969). Trainability is 'tested' with a small training of 10
-epochs for comparison. However, we want to note that 10 epochs of training are usually not sufficient for this but
-allows for a small glimpse. For this test (to see if the differential entropy predicts trainability correclty)
-trainability is predicted based on an accuarcy reached after 10 epochs of training. Black means good trainability, grey
-indicates trainability, and white means an accurcy of <= 10% (guessing). As can be seen, the diff. entropy predictions
-greatly agree with the tests:
+and thus differs from [Yang](https://arxiv.org/pdf/1712.08969).
 ![Image of differential entropy](images/resnet_entropie.png)
 
 Please note that the depth of the y-axis describes the number of ResNet blocks (i.e. skip connections).
