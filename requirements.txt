@@ -1,6 +1,6 @@
 torch~=1.10.0
 numpy~=1.22.4
 matplotlib~=3.3.3
-scipy~=1.6.0
 torchvision~=0.11.1
 pandas~=2.2.1
+pillow~=10.2.0
