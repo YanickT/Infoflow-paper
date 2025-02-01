@@ -96,6 +96,13 @@ The reconstruction is more blurred as the pooling naturally throws information a
 
 ![Reconstruction using all channels after last Maxpool](images/conv_recon_full_17.png)
 
+
+Some channels, especially at deeper layers, seem to store more complex features. Channel 216 in layer 10 seems to store
+faces. This can already be seen in the reconstruction for that channel for the input above (channel in section Layer 10 
+bellow). However, it becomes more evident, when considering further input images e.g.
+
+![Reconstruction of channel 216 layer 10](images/channel_images/face_prediction.png)
+
 Finally, some more nice plots of different channels and reconstructions. 
 The naming convention is `<layer>_<channel>.png`.
 
@@ -118,4 +125,5 @@ The naming convention is `<layer>_<channel>.png`.
 #### Layer 10
 ![Reconstruction of a channel](images/channel_images/10_180.png)
 ![Reconstruction of a channel](images/channel_images/10_216.png)
+
 
